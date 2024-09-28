@@ -1,6 +1,5 @@
-Here's the index of the Go project in markdown format:
-
 # WordPress Update Server Project Index
+This index provides an overview of the project structure, file summaries, and function signatures with their inputs and outputs.
 
 ## Files and Summaries
 
@@ -9,6 +8,8 @@ Here's the index of the Go project in markdown format:
 3. `src/redis_storage.go`: Redis storage operations for WordPress data
 4. `src/server.go`: HTTP server handling API endpoints
 5. `src/wp_updater.go`: Periodic updater for WordPress core, plugins, and themes
+6. `tests/api_test.go`: API endpoint tests for the server
+7. `src/custom-wp-update-source.php`: WordPress plugin to redirect updates to a custom mirror
 
 ## Functions and I/O
 
@@ -62,4 +63,21 @@ Here's the index of the Go project in markdown format:
 - `updateThemes()`: No input, no output.
 - `main()`: No input, no output. Program entry point.
 
-This index provides an overview of the project structure, file summaries, and function signatures with their inputs and outputs.
+### tests/api_test.go
+
+- `setupRouter() *gin.Engine`: No input, returns a configured Gin router.
+- `TestCoreUpdateCheck(t *testing.T)`: Input: testing.T, no output. Tests core update check endpoint.
+- `TestPluginInfoBulk(t *testing.T)`: Input: testing.T, no output. Tests plugin info bulk endpoint.
+- `TestThemeInfoBulk(t *testing.T)`: Input: testing.T, no output. Tests theme info bulk endpoint.
+
+### src/custom-wp-update-source.php
+
+- `Custom_WP_Update_Source`: Main class for the WordPress plugin.
+- `__construct()`: Constructor, sets up filters for update checks.
+- `custom_check_core_updates($transient, $transient_name)`: Checks for core updates from custom mirror.
+- `merge_core_updates($transient, $transient_name)`: Merges core updates from custom mirror.
+- `custom_check_plugin_updates($transient, $transient_name)`: Checks for plugin updates from custom mirror.
+- `merge_plugin_updates($transient, $transient_name)`: Merges plugin updates from custom mirror.
+- `custom_check_theme_updates($transient, $transient_name)`: Checks for theme updates from custom mirror.
+- `merge_theme_updates($transient, $transient_name)`: Merges theme updates from custom mirror.
+- `make_request($method, $endpoint, $body = null)`: Makes HTTP requests to the custom mirror.
