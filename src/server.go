@@ -3,232 +3,174 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis/v8"
-	"context"
-	"errors"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/gin-gonic/gin"
 )
 
-var ctx = context.Background()
+const (
+	coreDir    = "/path/to/core/files"
+	pluginsDir = "/path/to/plugins/files"
+	themesDir  = "/path/to/themes/files"
+)
 
-// Redis client
-var rdb *redis.Client
-
-// Structs for storing WordPress information
-type CoreVersion struct {
-	Version       string `json:"version"`
-	PHPVersion    string `json:"php_version"`
-	MySQLVersion  string `json:"mysql_version"`
-	NewBundled    string `json:"new_bundled"`
-	PartialVersion bool   `json:"partial_version"`
-	Package       string `json:"package"`
-	Current       string `json:"current"`
-	Locale        string `json:"locale"`
-}
-
-type PluginVersion struct {
-	Slug       string `json:"slug"`
-	NewVersion string `json:"new_version"`
-	URL        string `json:"url"`
-	Package    string `json:"package"`
-}
-
-type ThemeVersion struct {
-	Theme      string `json:"theme"`
-	NewVersion string `json:"new_version"`
-	URL        string `json:"url"`
-	Package    string `json:"package"`
-}
-
-// InitRedis initializes the Redis connection
-func InitRedis(addr string) error {
-	rdb = redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
-
-	_, err := rdb.Ping(ctx).Result()
-	return err
-}
-
-// SetCoreVersions sets the list of core version information
-func SetCoreVersions(versions []CoreVersion) error {
-	for _, v := range versions {
-		jsonData, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		err = rdb.HSet(ctx, "core_versions", v.Version, jsonData).Err()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// GetCoreVersions gets the list of core version information
-func GetCoreVersions() ([]CoreVersion, error) {
-	data, err := rdb.HGetAll(ctx, "core_versions").Result()
+func main() {
+	// Initialize Redis connection
+	err := InitRedis("localhost:6379")
 	if err != nil {
-		return nil, err
+		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 
-	versions := make([]CoreVersion, 0, len(data))
-	for _, v := range data {
-		var version CoreVersion
-		err := json.Unmarshal([]byte(v), &version)
-		if err != nil {
-			return nil, err
-		}
-		versions = append(versions, version)
-	}
-	return versions, nil
+	r := gin.Default()
+
+	// Core update check endpoint
+	r.GET("/core-update-check/", handleCoreUpdateCheck)
+
+	// Plugin info bulk endpoint
+	r.POST("/plugin-info-bulk/", handlePluginInfoBulk)
+
+	// Theme info bulk endpoint
+	r.POST("/theme-info-bulk/", handleThemeInfoBulk)
+
+	// Core download endpoint
+	r.GET("/core/:version.zip", handleCoreDownload)
+
+	// Plugin download endpoint
+	r.GET("/plugins/:plugin-slug/:version.zip", handlePluginDownload)
+
+	// Theme download endpoint
+	r.GET("/themes/:theme-slug/:version.zip", handleThemeDownload)
+
+	r.Run(":8080")
 }
 
-// SetPluginVersions sets the list of plugin version information for a given plugin file
-func SetPluginVersions(pluginFile string, versions []PluginVersion) error {
-	key := fmt.Sprintf("plugins:%s", pluginFile)
-	for _, v := range versions {
-		jsonData, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		err = rdb.HSet(ctx, key, v.NewVersion, jsonData).Err()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// GetPluginVersions gets the list of plugin version information for a given plugin file
-func GetPluginVersions(pluginFile string) ([]PluginVersion, error) {
-	key := fmt.Sprintf("plugins:%s", pluginFile)
-	data, err := rdb.HGetAll(ctx, key).Result()
+func handleCoreUpdateCheck(c *gin.Context) {
+	versions, err := GetCoreVersions()
 	if err != nil {
-		return nil, err
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve core versions"})
+		return
 	}
 
-	versions := make([]PluginVersion, 0, len(data))
-	for _, v := range data {
-		var version PluginVersion
-		err := json.Unmarshal([]byte(v), &version)
-		if err != nil {
-			return nil, err
-		}
-		versions = append(versions, version)
-	}
-	return versions, nil
-}
-
-// SetThemeVersions sets the list of theme version information for a given theme slug
-func SetThemeVersions(themeSlug string, versions []ThemeVersion) error {
-	key := fmt.Sprintf("themes:%s", themeSlug)
-	for _, v := range versions {
-		jsonData, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		err = rdb.HSet(ctx, key, v.NewVersion, jsonData).Err()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// GetThemeVersions gets the list of theme version information for a given theme slug
-func GetThemeVersions(themeSlug string) ([]ThemeVersion, error) {
-	key := fmt.Sprintf("themes:%s", themeSlug)
-	data, err := rdb.HGetAll(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	versions := make([]ThemeVersion, 0, len(data))
-	for _, v := range data {
-		var version ThemeVersion
-		err := json.Unmarshal([]byte(v), &version)
-		if err != nil {
-			return nil, err
-		}
-		versions = append(versions, version)
-	}
-	return versions, nil
-}
-
-// ListAllPluginFiles lists all stored plugin files
-func ListAllPluginFiles() ([]string, error) {
-	keys, err := rdb.Keys(ctx, "plugins:*").Result()
-	if err != nil {
-		return nil, err
-	}
-
-	pluginFiles := make([]string, len(keys))
-	for i, key := range keys {
-		pluginFiles[i] = key[8:] // Remove "plugins:" prefix
-	}
-	return pluginFiles, nil
-}
-
-// ListAllThemeSlugs lists all stored theme slugs
-func ListAllThemeSlugs() ([]string, error) {
-	keys, err := rdb.Keys(ctx, "themes:*").Result()
-	if err != nil {
-		return nil, err
-	}
-
-	themeSlugs := make([]string, len(keys))
-	for i, key := range keys {
-		themeSlugs[i] = key[7:] // Remove "themes:" prefix
-	}
-	return themeSlugs, nil
-}
-
-// GetLatestPluginVersion gets the latest plugin version information for a given plugin file
-func GetLatestPluginVersion(pluginFile string) (*PluginVersion, error) {
-	key := fmt.Sprintf("plugins:%s", pluginFile)
-	versions, err := rdb.HGetAll(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
 	if len(versions) == 0 {
-		return nil, errors.New("no versions found for the plugin")
+		c.JSON(http.StatusNotFound, gin.H{"error": "No core versions available"})
+		return
 	}
 
-	var latestVersion PluginVersion
-	var latestVersionNumber string
-	for version, data := range versions {
-		if version > latestVersionNumber {
-			latestVersionNumber = version
-			err := json.Unmarshal([]byte(data), &latestVersion)
-			if err != nil {
-				return nil, err
-			}
-		}
+	// Assuming the latest version is the first in the list
+	latestVersion := versions[0]
+
+	response := gin.H{
+		"updates": []gin.H{
+			{
+				"version":         latestVersion.Version,
+				"php_version":     latestVersion.PHPVersion,
+				"mysql_version":   latestVersion.MySQLVersion,
+				"new_bundled":     latestVersion.NewBundled,
+				"partial_version": latestVersion.PartialVersion,
+				"package":         latestVersion.Package,
+				"current":         latestVersion.Current,
+				"locale":          latestVersion.Locale,
+			},
+		},
 	}
-	return &latestVersion, nil
+
+	c.JSON(http.StatusOK, response)
 }
 
-// GetLatestThemeVersion gets the latest theme version information for a given theme slug
-func GetLatestThemeVersion(themeSlug string) (*ThemeVersion, error) {
-	key := fmt.Sprintf("themes:%s", themeSlug)
-	versions, err := rdb.HGetAll(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-	if len(versions) == 0 {
-		return nil, errors.New("no versions found for the theme")
+func handlePluginInfoBulk(c *gin.Context) {
+	var requestBody map[string]string
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
 	}
 
-	var latestVersion ThemeVersion
-	var latestVersionNumber string
-	for version, data := range versions {
-		if version > latestVersionNumber {
-			latestVersionNumber = version
-			err := json.Unmarshal([]byte(data), &latestVersion)
-			if err != nil {
-				return nil, err
-			}
+	response := make(map[string]interface{})
+
+	for pluginFile, pluginSlug := range requestBody {
+		latestVersion, err := GetLatestPluginVersion(pluginFile)
+		if err != nil {
+			log.Printf("Error retrieving plugin info for %s: %v", pluginFile, err)
+			continue
+		}
+
+		response[pluginFile] = gin.H{
+			"slug":        pluginSlug,
+			"new_version": latestVersion.NewVersion,
+			"url":         latestVersion.URL,
+			"package":     latestVersion.Package,
 		}
 	}
-	return &latestVersion, nil
+
+	c.JSON(http.StatusOK, response)
+}
+
+func handleThemeInfoBulk(c *gin.Context) {
+	var requestBody []string
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	response := make(map[string]interface{})
+
+	for _, themeSlug := range requestBody {
+		latestVersion, err := GetLatestThemeVersion(themeSlug)
+		if err != nil {
+			log.Printf("Error retrieving theme info for %s: %v", themeSlug, err)
+			continue
+		}
+
+		response[themeSlug] = gin.H{
+			"theme":       themeSlug,
+			"new_version": latestVersion.NewVersion,
+			"url":         latestVersion.URL,
+			"package":     latestVersion.Package,
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func handleCoreDownload(c *gin.Context) {
+	version := c.Param("version")
+	filename := fmt.Sprintf("wordpress-%s.zip", version)
+	filepath := filepath.Join(coreDir, filename)
+
+	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
+		return
+	}
+
+	c.File(filepath)
+}
+
+func handlePluginDownload(c *gin.Context) {
+	pluginSlug := c.Param("plugin-slug")
+	version := c.Param("version")
+	filename := fmt.Sprintf("%s.%s.zip", pluginSlug, version)
+	filepath := filepath.Join(pluginsDir, filename)
+
+	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
+		return
+	}
+
+	c.File(filepath)
+}
+
+func handleThemeDownload(c *gin.Context) {
+	themeSlug := c.Param("theme-slug")
+	version := c.Param("version")
+	filename := fmt.Sprintf("%s.%s.zip", themeSlug, version)
+	filepath := filepath.Join(themesDir, filename)
+
+	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
+		return
+	}
+
+	c.File(filepath)
 }
